@@ -18,10 +18,10 @@ class KrakenArbitrageBot:
         self.kraken = krakenex.API(key=self.api_key, secret=self.api_secret)
         
         # Configuración REALISTA para rentabilidad
-        self.min_profit_threshold = 0.70  # 1.0% mínimo (después de 0.52% comisiones = 0.48% neto)
+        self.min_profit_threshold = 1.0  # 1.0% mínimo (después de 0.52% comisiones = 0.48% neto)
         self.min_spread_alert = 0.8  # Alertar spreads anormales >0.8%
-        self.max_position_size = 30  # USD por operación
-        self.max_daily_trades = 200  # Límite para versión gratuita de GitHub
+        self.max_position_size = 25  # USD por operación
+        self.max_daily_trades = 20  # Límite para versión gratuita de GitHub
         
         # Stats tracking
         self.opportunities_found = 0
@@ -29,14 +29,41 @@ class KrakenArbitrageBot:
         
         # MODO TRADING (⚠️ PELIGROSO - Desactivado por defecto)
         self.auto_trade_enabled = os.environ.get('AUTO_TRADE_ENABLED', 'false').lower() == 'true'
-        self.min_spread_to_trade = 0.7  # Solo tradea si hay >1.5% neto (muy conservador)
+        self.min_spread_to_trade = 1.5  # Solo tradea si hay >1.5% neto (muy conservador)
         self.trading_pairs = [
-            # Pares principales (spreads bajos pero líquidos)
+            # === PRINCIPALES (Muy líquidos, spreads bajos 0.01-0.1%) ===
             'XBTUSD', 'ETHUSD', 'XBTEUR', 'ETHEUR',
             'XBTUSDT', 'ETHUSDT',
-            # Altcoins (spreads más altos pero menos líquidos)
-            'ADAUSD', 'SOLUSD', 'DOTUSD', 'MATICUSD',
-            'LINKUSD', 'UNIUSD', 'AVAXUSD', 'ATOMUSD'
+            
+            # === ALTCOINS TOP 20 (Líquidos, spreads 0.2-0.8%) ===
+            'SOLUSD', 'ADAUSD', 'DOTUSD', 'MATICUSD',
+            'LINKUSD', 'UNIUSD', 'AVAXUSD', 'ATOMUSD',
+            'XRPUSD', 'LTCUSD', 'ALGOUSD', 'XLMUSD',
+            
+            # === ALTCOINS MEDIOS (Menos líquidos, spreads 0.8-2%) ===
+            'FETUSD',   # AI/ML (Fetch.ai)
+            'RENDERUSD', # GPU/Rendering
+            'GRTUSD',    # The Graph
+            'INJUSD',    # Injective
+            'AAVEUSD',   # DeFi
+            'COMPUSD',   # DeFi
+            'SNXUSD',    # Synthetix
+            'MANAUSD',   # Metaverse
+            'SANDUSD',   # Metaverse
+            
+            # === MEMECOINS (MUY volátiles, spreads 1-5%) ===
+            'DOGEUSD',   # Dogecoin
+            'SHIBUSD',   # Shiba Inu
+            'BONKUSD',   # Bonk
+            'PEPEUSD',   # Pepe
+            
+            # === ALTCOINS PEQUEÑOS (ALTA volatilidad, spreads 2-10%) ===
+            'ENJUSD',    # Gaming
+            '1INCHUSD',  # DEX Aggregator
+            'CHZUSD',    # Chiliz
+            'BATUSD',    # Basic Attention Token
+            'ZRXUSD',    # 0x Protocol
+            'KNCUSD',    # Kyber Network
         ]
         
     def send_telegram(self, message):
@@ -232,8 +259,59 @@ class KrakenArbitrageBot:
         
         self.send_telegram(msg)
         
-        # Por seguridad, NO ejecutar automáticamente
+        # TRADING AUTOMÁTICO (solo si está habilitado)
+        if self.auto_trade_enabled and 'VIABLE' in str(opportunity.get('type', '')):
+            net_profit = opportunity.get('net_profit_pct', 0)
+            
+            if net_profit >= self.min_spread_to_trade:
+                return self.execute_trade(opportunity)
+        
         return False
+    
+    def execute_trade(self, opportunity):
+        """Ejecuta el trade real en Kraken"""
+        try:
+            pair = opportunity['pair']
+            
+            # Obtener precio actual
+            ticker = self.get_ticker(pair)
+            if not ticker:
+                self.send_telegram(f"❌ No se pudo obtener precio para {pair}")
+                return False
+            
+            # Calcular volumen a tradear
+            price = ticker['ask']
+            volume = self.max_position_size / price
+            volume = round(volume, 8)  # Kraken usa 8 decimales
+            
+            # COMPRAR al ask
+            self.send_telegram(f"🔄 Ejecutando BUY {volume} {pair} @ ${price:.2f}")
+            buy_order = self.place_order(pair, 'buy', volume)
+            
+            if not buy_order.get('success'):
+                self.send_telegram(f"❌ Error BUY: {buy_order.get('error')}")
+                return False
+            
+            time.sleep(2)  # Esperar confirmación
+            
+            # VENDER al bid
+            sell_price = ticker['bid']
+            self.send_telegram(f"🔄 Ejecutando SELL {volume} {pair} @ ${sell_price:.2f}")
+            sell_order = self.place_order(pair, 'sell', volume)
+            
+            if not sell_order.get('success'):
+                self.send_telegram(f"❌ Error SELL: {sell_order.get('error')}\n⚠️ Tienes posición abierta!")
+                return False
+            
+            # Calcular ganancia real
+            profit = (sell_price - price) * volume
+            self.send_telegram(f"✅ Trade completado!\nGanancia: ${profit:.2f}")
+            
+            return True
+            
+        except Exception as e:
+            self.send_telegram(f"❌ Error ejecutando trade: {str(e)}")
+            return False
     
     def run(self):
         """Ejecuta el ciclo principal del bot"""
@@ -255,6 +333,17 @@ class KrakenArbitrageBot:
             
             total_opps = len(triangular_opps) + len(spread_opps)
             viable_opps = len([o for o in spread_opps if 'VIABLE' in o.get('type', '')])
+            
+            # Ejecutar trades si está habilitado
+            trades_executed = 0
+            if self.auto_trade_enabled and viable_opps > 0:
+                self.send_telegram(f"⚠️ <b>MODO AUTO-TRADE ACTIVADO</b>\nBuscando oportunidades para tradear...")
+                
+                for opp in spread_opps:
+                    if 'VIABLE' in opp.get('type', '') and opp.get('net_profit_pct', 0) >= self.min_spread_to_trade:
+                        if self.execute_arbitrage(opp):
+                            trades_executed += 1
+                            time.sleep(5)  # Esperar entre trades
             
             if total_opps == 0:
                 self.send_telegram("✅ Análisis completado.\n\n❌ No se encontraron spreads >0.8%\n\nEsto es NORMAL. Los spreads rentables (>1%) son raros.")
@@ -284,6 +373,14 @@ class KrakenArbitrageBot:
                         msg += f"Neto: {opp['net_profit_pct']:.3f}%\n\n"
                 
                 self.send_telegram(msg)
+            
+            # Resumen final si hubo trades
+            if self.auto_trade_enabled:
+                final_balance = self.get_balance()
+                summary = f"\n\n📊 <b>Resumen de Sesión</b>\n"
+                summary += f"Trades ejecutados: {trades_executed}\n"
+                summary += f"Modo: {'🔴 AUTO' if self.auto_trade_enabled else '🟢 SOLO ALERTAS'}"
+                self.send_telegram(summary)
             
             # Guardar resultados
             results = {
