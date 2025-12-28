@@ -3,7 +3,19 @@ name: Kraken Arbitrage Bot
 on:
   schedule:
     # Ejecutar cada 30 minutos (optimizado para plan gratuito)
-    - cron: '*/30 * * * *'
+    # Esto da ~48 ejecuciones/día = ~1,440 min/mes de los 2,000 disponibles
+    #- cron: '*/30 * * * *'
+    
+    # ALTERNATIVAS (descomenta la que prefieras):
+    # Cada 15 minutos (más agresivo) - Usa ~2,880 min/mes ⚠️ Excede límite
+     - cron: '*/15 * * * *'
+    
+    # Cada hora (conservador) - Usa ~720 min/mes ✅
+    # - cron: '0 * * * *'
+    
+    # Solo horas de trading activo 9am-9pm UTC
+    # - cron: '0 9-21 * * *'
+    
   workflow_dispatch:  # Permite ejecución manual
 
 jobs:
@@ -38,6 +50,8 @@ jobs:
         KRAKEN_API_SECRET: ${{ secrets.KRAKEN_API_SECRET }}
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        # ⚠️ PELIGROSO: Descomenta solo si quieres trading automático
+        # AUTO_TRADE_ENABLED: ${{ secrets.AUTO_TRADE_ENABLED }}
       run: |
         python kraken_arbitrage_bot.py
         
