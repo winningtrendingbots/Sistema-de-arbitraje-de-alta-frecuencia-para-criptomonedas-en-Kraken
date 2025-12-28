@@ -1,0 +1,59 @@
+name: Kraken Arbitrage Bot
+
+on:
+  schedule:
+    # Ejecutar cada 30 minutos (optimizado para plan gratuito)
+    - cron: '*/30 * * * *'
+  workflow_dispatch:  # Permite ejecución manual
+
+jobs:
+  arbitrage-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Instalar dependencias
+      run: |
+        python -m pip install --upgrade pip
+        pip install krakenex requests python-telegram-bot
+        
+    - name: Ejecutar bot de arbitraje
+      env:
+        KRAKEN_API_KEY: ${{ secrets.KRAKEN_API_KEY }}
+        KRAKEN_API_SECRET: ${{ secrets.KRAKEN_API_SECRET }}
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        python kraken_arbitrage_bot.py
+        
+    - name: Guardar resultados
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: arbitrage-results
+        path: arbitrage_results.json
+        retention-days: 7
+        
+    - name: Commit resultados (opcional)
+      if: success()
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add arbitrage_results.json || true
+        git commit -m "Update arbitrage results [skip ci]" || true
+        git push || true
