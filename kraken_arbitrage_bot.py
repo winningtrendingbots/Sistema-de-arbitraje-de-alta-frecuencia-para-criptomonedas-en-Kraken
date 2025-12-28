@@ -26,6 +26,10 @@ class KrakenArbitrageBot:
         # Stats tracking
         self.opportunities_found = 0
         self.avg_spread = 0
+        
+        # MODO TRADING (⚠️ PELIGROSO - Desactivado por defecto)
+        self.auto_trade_enabled = os.environ.get('AUTO_TRADE_ENABLED', 'false').lower() == 'true'
+        self.min_spread_to_trade = 1.5  # Solo tradea si hay >1.5% neto (muy conservador)
         self.trading_pairs = [
             # Pares principales (spreads bajos pero líquidos)
             'XBTUSD', 'ETHUSD', 'XBTEUR', 'ETHEUR',
