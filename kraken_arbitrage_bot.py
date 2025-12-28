@@ -17,13 +17,22 @@ class KrakenArbitrageBot:
         self.telegram_chat_id = os.environ.get('TELEGRAM_CHAT_ID')
         self.kraken = krakenex.API(key=self.api_key, secret=self.api_secret)
         
-        # Configuración adaptada a cuenta pequeña
-        self.min_profit_threshold = 0.3  # 0.3% mínimo de ganancia
+        # Configuración REALISTA para rentabilidad
+        self.min_profit_threshold = 1.0  # 1.0% mínimo (después de 0.52% comisiones = 0.48% neto)
+        self.min_spread_alert = 0.8  # Alertar spreads anormales >0.8%
         self.max_position_size = 25  # USD por operación
         self.max_daily_trades = 20  # Límite para versión gratuita de GitHub
+        
+        # Stats tracking
+        self.opportunities_found = 0
+        self.avg_spread = 0
         self.trading_pairs = [
+            # Pares principales (spreads bajos pero líquidos)
             'XBTUSD', 'ETHUSD', 'XBTEUR', 'ETHEUR',
-            'XBTUSDT', 'ETHUSDT', 'ADAUSD', 'SOLUSD'
+            'XBTUSDT', 'ETHUSDT',
+            # Altcoins (spreads más altos pero menos líquidos)
+            'ADAUSD', 'SOLUSD', 'DOTUSD', 'MATICUSD',
+            'LINKUSD', 'UNIUSD', 'AVAXUSD', 'ATOMUSD'
         ]
         
     def send_telegram(self, message):
@@ -120,17 +129,38 @@ class KrakenArbitrageBot:
             if not ticker:
                 continue
             
-            spread = ((ticker['ask'] - ticker['bid']) / ticker['bid']) * 100
+            # Calcular spread bid-ask
+            spread_pct = ((ticker['ask'] - ticker['bid']) / ticker['bid']) * 100
             
-            # Si el spread es inusualmente alto, puede haber oportunidad
-            if spread > 0.5:  # 0.5% spread anormal
+            # Calcular ganancia neta después de comisiones
+            gross_profit = spread_pct
+            net_profit = gross_profit - 0.52  # Comisiones Kraken (0.26% x 2)
+            
+            # Solo alertar si es REALMENTE rentable
+            if net_profit >= self.min_profit_threshold:
+                self.opportunities_found += 1
                 opportunities.append({
-                    'type': 'spread',
+                    'type': 'spread_VIABLE',
                     'pair': pair,
                     'bid': ticker['bid'],
                     'ask': ticker['ask'],
-                    'spread_pct': spread,
-                    'timestamp': datetime.now().isoformat()
+                    'spread_pct': spread_pct,
+                    'net_profit_pct': net_profit,
+                    'estimated_profit_usd': (net_profit / 100) * self.max_position_size,
+                    'timestamp': datetime.now().isoformat(),
+                    'viability': '✅ RENTABLE' if net_profit > 0 else '⚠️ NO RENTABLE'
+                })
+            # Alertar spreads anormales aunque no sean rentables
+            elif spread_pct > self.min_spread_alert:
+                opportunities.append({
+                    'type': 'spread_watch',
+                    'pair': pair,
+                    'bid': ticker['bid'],
+                    'ask': ticker['ask'],
+                    'spread_pct': spread_pct,
+                    'net_profit_pct': net_profit,
+                    'timestamp': datetime.now().isoformat(),
+                    'viability': '⚠️ Spread alto pero NO rentable (comisiones)'
                 })
         
         return opportunities
@@ -170,20 +200,35 @@ class KrakenArbitrageBot:
     
     def execute_arbitrage(self, opportunity):
         """Ejecuta una operación de arbitraje"""
-        msg = f"🚨 <b>Oportunidad Detectada</b>\n"
+        viability = opportunity.get('viability', '')
+        
+        if 'VIABLE' in str(opportunity.get('type', '')):
+            msg = f"🚨🚨 <b>¡OPORTUNIDAD RENTABLE!</b> 🚨🚨\n\n"
+        else:
+            msg = f"⚠️ <b>Spread Alto Detectado</b>\n\n"
+        
         msg += f"Tipo: {opportunity['type']}\n"
         
         if opportunity['type'] == 'triangular':
             msg += f"Ruta: {opportunity['path']}\n"
             msg += f"Ganancia estimada: {opportunity['profit_pct']:.2f}%\n"
-        elif opportunity['type'] == 'spread':
+        elif 'spread' in opportunity['type']:
             msg += f"Par: {opportunity['pair']}\n"
-            msg += f"Spread: {opportunity['spread_pct']:.2f}%\n"
+            msg += f"Spread bruto: {opportunity['spread_pct']:.3f}%\n"
+            
+            if 'net_profit_pct' in opportunity:
+                msg += f"Ganancia NETA: {opportunity['net_profit_pct']:.3f}%\n"
+                msg += f"Estado: {opportunity['viability']}\n"
+                
+            if 'estimated_profit_usd' in opportunity:
+                msg += f"\n💰 Con ${self.max_position_size}:\n"
+                msg += f"Ganancia estimada: ${opportunity['estimated_profit_usd']:.2f}\n"
+        
+        msg += f"\n⏰ {opportunity['timestamp']}"
         
         self.send_telegram(msg)
         
-        # Por seguridad, NO ejecutar automáticamente con cuenta real pequeña
-        # Solo notificar y registrar
+        # Por seguridad, NO ejecutar automáticamente
         return False
     
     def run(self):
@@ -205,21 +250,34 @@ class KrakenArbitrageBot:
             spread_opps = self.calculate_cross_exchange_arbitrage()
             
             total_opps = len(triangular_opps) + len(spread_opps)
+            viable_opps = len([o for o in spread_opps if 'VIABLE' in o.get('type', '')])
             
             if total_opps == 0:
-                self.send_telegram("✅ Análisis completado. No se encontraron oportunidades.")
+                self.send_telegram("✅ Análisis completado.\n\n❌ No se encontraron spreads >0.8%\n\nEsto es NORMAL. Los spreads rentables (>1%) son raros.")
             else:
-                msg = f"📊 <b>Oportunidades encontradas: {total_opps}</b>\n\n"
+                msg = f"📊 <b>Análisis Completado</b>\n\n"
+                msg += f"Total oportunidades: {total_opps}\n"
+                msg += f"🎯 RENTABLES (>1% neto): {viable_opps}\n"
+                msg += f"⚠️ Spreads altos pero no rentables: {total_opps - viable_opps}\n\n"
                 
-                for opp in triangular_opps[:3]:  # Mostrar top 3
-                    msg += f"🔺 Triangular\n"
-                    msg += f"Ruta: {opp['path']}\n"
-                    msg += f"Ganancia: {opp['profit_pct']:.2f}%\n\n"
+                # Mostrar solo las RENTABLES primero
+                viable_spread = [o for o in spread_opps if 'VIABLE' in o.get('type', '')]
+                if viable_spread:
+                    msg += "🚨 <b>OPORTUNIDADES RENTABLES:</b>\n\n"
+                    for opp in viable_spread[:3]:
+                        msg += f"✅ {opp['pair']}\n"
+                        msg += f"Spread: {opp['spread_pct']:.3f}%\n"
+                        msg += f"Neto: {opp['net_profit_pct']:.3f}%\n"
+                        msg += f"Ganancia: ${opp['estimated_profit_usd']:.2f}\n\n"
                 
-                for opp in spread_opps[:3]:
-                    msg += f"📈 Spread\n"
-                    msg += f"Par: {opp['pair']}\n"
-                    msg += f"Spread: {opp['spread_pct']:.2f}%\n\n"
+                # Luego las no rentables
+                watch_spread = [o for o in spread_opps if 'watch' in o.get('type', '')]
+                if watch_spread and len(msg) < 3000:
+                    msg += "⚠️ <b>Spreads altos (NO rentables):</b>\n\n"
+                    for opp in watch_spread[:2]:
+                        msg += f"📊 {opp['pair']}\n"
+                        msg += f"Spread: {opp['spread_pct']:.3f}%\n"
+                        msg += f"Neto: {opp['net_profit_pct']:.3f}%\n\n"
                 
                 self.send_telegram(msg)
             
