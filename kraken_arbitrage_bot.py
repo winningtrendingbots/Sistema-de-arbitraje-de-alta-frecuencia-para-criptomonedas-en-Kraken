@@ -18,7 +18,7 @@ class KrakenArbitrageBot:
         self.kraken = krakenex.API(key=self.api_key, secret=self.api_secret)
         
         # Configuración REALISTA para rentabilidad
-        self.min_profit_threshold = 1.0  # 1.0% mínimo (después de 0.52% comisiones = 0.48% neto)
+        self.min_profit_threshold = 0.70  # 1.0% mínimo (después de 0.52% comisiones = 0.48% neto)
         self.min_spread_alert = 0.8  # Alertar spreads anormales >0.8%
         self.max_position_size = 30  # USD por operación
         self.max_daily_trades = 200  # Límite para versión gratuita de GitHub
@@ -29,7 +29,7 @@ class KrakenArbitrageBot:
         
         # MODO TRADING (⚠️ PELIGROSO - Desactivado por defecto)
         self.auto_trade_enabled = os.environ.get('AUTO_TRADE_ENABLED', 'false').lower() == 'true'
-        self.min_spread_to_trade = 1.1  # Solo tradea si hay >1.5% neto (muy conservador)
+        self.min_spread_to_trade = 0.7  # Solo tradea si hay >1.5% neto (muy conservador)
         self.trading_pairs = [
             # Pares principales (spreads bajos pero líquidos)
             'XBTUSD', 'ETHUSD', 'XBTEUR', 'ETHEUR',
