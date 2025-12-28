@@ -51,7 +51,7 @@ jobs:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         # ⚠️ PELIGROSO: Descomenta solo si quieres trading automático
-        # AUTO_TRADE_ENABLED: ${{ secrets.AUTO_TRADE_ENABLED }}
+        AUTO_TRADE_ENABLED: ${{ secrets.AUTO_TRADE_ENABLED }}
       run: |
         python kraken_arbitrage_bot.py
         
