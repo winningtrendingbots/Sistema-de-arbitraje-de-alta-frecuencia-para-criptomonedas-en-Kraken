@@ -8,7 +8,7 @@ on:
     
     # ALTERNATIVAS (descomenta la que prefieras):
     # Cada 15 minutos (más agresivo) - Usa ~2,880 min/mes ⚠️ Excede límite
-     - cron: '*/15 * * * *'
+     - cron: '*/2 * * * *'
     
     # Cada hora (conservador) - Usa ~720 min/mes ✅
     # - cron: '0 * * * *'
